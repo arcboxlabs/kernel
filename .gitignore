@@ -1,0 +1,11 @@
+# Build outputs
+/output/
+/release/
+linux-*/
+
+# Temporary files
+*.tmp
+*.log
+
+# macOS
+.DS_Store

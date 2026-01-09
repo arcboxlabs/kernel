@@ -1,0 +1,197 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: 'Linux kernel version'
+        required: false
+        default: '6.12.0'
+
+env:
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.0' }}
+
+jobs:
+  build-kernel:
+    name: Build Kernel (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm64
+          - arch: x86_64
+            runner: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            cpio \
+            curl \
+            xz-utils
+
+      - name: Download kernel source
+        run: |
+          curl -sL "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.KERNEL_VERSION }}.tar.xz" | tar -xJ
+
+      - name: Build kernel
+        run: |
+          cd linux-${{ env.KERNEL_VERSION }}
+          cp ../configs/arcbox-${{ matrix.arch }}.config .config
+          make olddefconfig
+          make -j$(nproc)
+          mkdir -p ../output
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            cp arch/arm64/boot/Image ../output/kernel-${{ matrix.arch }}
+          else
+            cp arch/x86/boot/bzImage ../output/kernel-${{ matrix.arch }}
+          fi
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ matrix.arch }}
+          path: output/kernel-${{ matrix.arch }}
+
+  build-initramfs:
+    name: Build Initramfs (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm64
+            rust_target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-musl
+
+    steps:
+      - name: Checkout kernel repo
+        uses: actions/checkout@v4
+
+      - name: Checkout arcbox repo
+        uses: actions/checkout@v4
+        with:
+          repository: arcboxd/arcbox
+          path: arcbox
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install musl tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build arcbox-agent
+        run: |
+          cd arcbox
+          cargo build -p arcbox-agent --target ${{ matrix.rust_target }} --release
+
+      - name: Download Alpine minirootfs
+        run: |
+          ALPINE_ARCH=${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}
+          curl -sL "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/${ALPINE_ARCH}/alpine-minirootfs-3.21.0-${ALPINE_ARCH}.tar.gz" -o minirootfs.tar.gz
+
+      - name: Build initramfs
+        run: |
+          mkdir -p initramfs output
+          cd initramfs
+          tar -xzf ../minirootfs.tar.gz
+
+          # Create directories
+          mkdir -p dev proc sys run tmp arcbox
+
+          # Copy agent
+          cp ../arcbox/target/${{ matrix.rust_target }}/release/arcbox-agent sbin/
+
+          # Create init script
+          cat > init << 'EOF'
+          #!/bin/sh
+          exec > /dev/console 2>&1
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          mount -t devtmpfs devtmpfs /dev
+          mkdir -p /dev/pts /dev/shm
+          mount -t devpts devpts /dev/pts
+          mount -t tmpfs tmpfs /dev/shm
+          mount -t tmpfs tmpfs /run
+          hostname arcbox-vm
+          echo "ArcBox Guest VM Starting..."
+          mkdir -p /arcbox
+          mount -t virtiofs arcbox /arcbox 2>/dev/null || true
+          RUST_LOG=arcbox_agent=info exec /sbin/arcbox-agent
+          EOF
+          chmod 755 init
+
+          # Pack
+          find . | cpio -o -H newc | gzip -9 > ../output/initramfs-${{ matrix.arch }}.cpio.gz
+
+      - name: Upload initramfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: initramfs-${{ matrix.arch }}
+          path: output/initramfs-${{ matrix.arch }}.cpio.gz
+
+  release:
+    name: Create Release
+    needs: [build-kernel, build-initramfs]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package releases
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION_NUM="${VERSION#v}"
+
+          mkdir -p release
+
+          for ARCH in arm64 x86_64; do
+            if [ -f "artifacts/kernel-$ARCH/kernel-$ARCH" ] && [ -f "artifacts/initramfs-$ARCH/initramfs-$ARCH.cpio.gz" ]; then
+              BUNDLE="arcbox-kernel-$ARCH-$VERSION_NUM"
+              mkdir -p "$BUNDLE"
+              cp "artifacts/kernel-$ARCH/kernel-$ARCH" "$BUNDLE/kernel"
+              cp "artifacts/initramfs-$ARCH/initramfs-$ARCH.cpio.gz" "$BUNDLE/initramfs.cpio.gz"
+              echo "$VERSION" > "$BUNDLE/VERSION"
+              tar -czvf "release/$BUNDLE.tar.gz" "$BUNDLE"
+              sha256sum "release/$BUNDLE.tar.gz" > "release/$BUNDLE.tar.gz.sha256"
+              rm -rf "$BUNDLE"
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
