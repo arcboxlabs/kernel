@@ -127,7 +127,6 @@ static int arcbox_probe_one(int idx)
 	dev->tag_set.nr_hw_queues = 1;
 	dev->tag_set.queue_depth = 64;
 	dev->tag_set.numa_node = NUMA_NO_NODE;
-	dev->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
 
 	err = blk_mq_alloc_tag_set(&dev->tag_set);
 	if (err)
