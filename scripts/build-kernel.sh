@@ -68,6 +68,14 @@ do_build() {
     cp "$ARCBOX_SRC/configs/arcbox-$TARGET_ARCH.config" .config
     make ARCH=$TARGET_ARCH ${CROSS_COMPILE:+CROSS_COMPILE=$CROSS_COMPILE} olddefconfig
 
+    # olddefconfig silently drops unknown or unsatisfiable symbols; assert the
+    # choice-selected internals we depend on actually resolved (a wrong choice
+    # symbol name in the fragment otherwise degrades silently).
+    grep -q '^CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y' .config || {
+        echo 'ERROR: SQUASHFS percpu decompressor missing after olddefconfig' >&2
+        exit 1
+    }
+
     # Build.
     echo "Building kernel..."
     make ARCH=$TARGET_ARCH ${CROSS_COMPILE:+CROSS_COMPILE=$CROSS_COMPILE} -j"$(nproc)" $KERNEL_IMAGE
@@ -107,6 +115,10 @@ cd linux-$KERNEL_VERSION
 sh /workspace/scripts/inject-drivers.sh /workspace
 cp /workspace/configs/arcbox-$TARGET_ARCH.config .config
 make ARCH=$TARGET_ARCH olddefconfig
+grep -q '^CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y' .config || {
+    echo 'ERROR: SQUASHFS percpu decompressor missing after olddefconfig' >&2
+    exit 1
+}
 echo 'Building kernel...'
 make ARCH=$TARGET_ARCH -j\$(nproc) $KERNEL_IMAGE
 cp arch/$TARGET_ARCH/boot/$KERNEL_IMAGE /output/kernel-$TARGET_ARCH
