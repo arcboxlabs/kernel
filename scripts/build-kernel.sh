@@ -4,7 +4,7 @@
 # Usage:
 #   ./build-kernel.sh                    # Build for ARM64
 #   ARCH=x86_64 ./build-kernel.sh        # Build for x86_64
-#   KERNEL_VERSION=6.12.0 ./build-kernel.sh  # Use specific version
+#   KERNEL_VERSION=6.18.0 ./build-kernel.sh  # Use specific version
 
 set -e
 
@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Configuration
-KERNEL_VERSION="${KERNEL_VERSION:-6.12.95}"
+KERNEL_VERSION="${KERNEL_VERSION:-6.18.38}"
 TARGET_ARCH="${ARCH:-arm64}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/output}"
 CONFIG_DIR="$PROJECT_DIR/configs"
@@ -69,12 +69,15 @@ do_build() {
     make ARCH=$TARGET_ARCH ${CROSS_COMPILE:+CROSS_COMPILE=$CROSS_COMPILE} olddefconfig
 
     # olddefconfig silently drops unknown or unsatisfiable symbols; assert the
-    # choice-selected internals we depend on actually resolved (a wrong choice
-    # symbol name in the fragment otherwise degrades silently).
-    grep -q '^CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y' .config || {
-        echo 'ERROR: SQUASHFS percpu decompressor missing after olddefconfig' >&2
-        exit 1
-    }
+    # load-bearing ones actually resolved (a renamed choice symbol or a new
+    # dependency gate in the fragment otherwise degrades silently — 6.18 did
+    # exactly that to the legacy iptables stack via NETFILTER_XTABLES_LEGACY).
+    for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT CONFIG_IP6_NF_NAT; do
+        grep -q "^$sym=y" .config || {
+            echo "ERROR: $sym missing after olddefconfig" >&2
+            exit 1
+        }
+    done
 
     # Build.
     echo "Building kernel..."
@@ -115,10 +118,12 @@ cd linux-$KERNEL_VERSION
 sh /workspace/scripts/inject-drivers.sh /workspace
 cp /workspace/configs/arcbox-$TARGET_ARCH.config .config
 make ARCH=$TARGET_ARCH olddefconfig
-grep -q '^CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y' .config || {
-    echo 'ERROR: SQUASHFS percpu decompressor missing after olddefconfig' >&2
-    exit 1
-}
+for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT CONFIG_IP6_NF_NAT; do
+    grep -q \"^\$sym=y\" .config || {
+        echo \"ERROR: \$sym missing after olddefconfig\" >&2
+        exit 1
+    }
+done
 echo 'Building kernel...'
 make ARCH=$TARGET_ARCH -j\$(nproc) $KERNEL_IMAGE
 cp arch/$TARGET_ARCH/boot/$KERNEL_IMAGE /output/kernel-$TARGET_ARCH

@@ -126,7 +126,7 @@ The initramfs contains:
 ARCH=x86_64 ./scripts/build-kernel.sh
 
 # Use specific kernel version
-KERNEL_VERSION=6.12.0 ./scripts/build-kernel.sh
+KERNEL_VERSION=6.18.0 ./scripts/build-kernel.sh
 ```
 
 ### Build Initramfs

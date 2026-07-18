@@ -6,7 +6,8 @@
 # rx_work loops forever → RCU stall. This adds a budget of 64 packets
 # per work invocation, matching virtio-net's NAPI approach.
 #
-# Applied to: net/vmw_vsock/virtio_transport.c (Linux 6.12.x)
+# Applied to: net/vmw_vsock/virtio_transport.c (Linux 6.18.x; also
+# verified to apply on 6.12.x and 7.1.x — upstream has no equivalent fix)
 
 set -e
 
