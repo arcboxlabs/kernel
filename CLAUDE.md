@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ARCH=x86_64 ./scripts/build-kernel.sh
 
 # Build kernel with specific version
-KERNEL_VERSION=6.12.0 ./scripts/build-kernel.sh
+KERNEL_VERSION=6.18.0 ./scripts/build-kernel.sh
 
 # Build initramfs (requires arcbox-agent binary)
 ./scripts/build-initramfs.sh

@@ -10,16 +10,16 @@ on:
   workflow_dispatch:
     inputs:
       kernel_version:
-        description: "Linux kernel version (e.g. 6.12.95)"
+        description: "Linux kernel version (e.g. 6.18.38)"
         required: false
-        default: "6.12.95"
+        default: "6.18.38"
         type: string
 
 permissions:
   contents: write
 
 env:
-  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.95' }}
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.18.38' }}
 
 jobs:
   # ==========================================================================
