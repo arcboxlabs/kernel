@@ -112,7 +112,7 @@ if [ "$BUILD_IN_DOCKER" = "1" ]; then
 set -e
 apk add --no-cache build-base bc bison flex openssl-dev elfutils-dev perl curl xz cpio linux-headers ncurses-dev
 echo 'Downloading Linux kernel $KERNEL_VERSION...'
-curl -L -o linux.tar.xz https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNEL_VERSION.tar.xz
+curl -L --retry 8 --retry-all-errors -o linux.tar.xz https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNEL_VERSION.tar.xz
 tar -xJf linux.tar.xz && rm linux.tar.xz
 cd linux-$KERNEL_VERSION
 sh /workspace/scripts/inject-drivers.sh /workspace
@@ -136,7 +136,7 @@ else
     cd "$BUILD_DIR"
 
     echo "Downloading Linux kernel $KERNEL_VERSION..."
-    curl -L -o "linux.tar.xz" "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNEL_VERSION.tar.xz"
+    curl -L --retry 8 --retry-all-errors -o "linux.tar.xz" "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNEL_VERSION.tar.xz"
     echo "Extracting..."
     tar -xJf "linux.tar.xz"
     rm "linux.tar.xz"
