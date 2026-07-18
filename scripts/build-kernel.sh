@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Configuration
-KERNEL_VERSION="${KERNEL_VERSION:-6.12.11}"
+KERNEL_VERSION="${KERNEL_VERSION:-6.12.95}"
 TARGET_ARCH="${ARCH:-arm64}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/output}"
 CONFIG_DIR="$PROJECT_DIR/configs"

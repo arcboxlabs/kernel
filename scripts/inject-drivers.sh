@@ -10,7 +10,7 @@ ARCBOX_DIR="${1:-.}"
 for patchfile in "$ARCBOX_DIR"/patches/*.patch; do
     [ -f "$patchfile" ] || continue
     echo "Applying patch: $patchfile"
-    patch -p1 < "$patchfile" || true
+    patch -p1 < "$patchfile"
 done
 
 # Run .sh patch scripts (for complex patches that need sed).
