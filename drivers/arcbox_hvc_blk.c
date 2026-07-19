@@ -16,6 +16,7 @@
 #include <linux/blk-mq.h>
 #include <linux/blkdev.h>
 #include <linux/init.h>
+#include <linux/version.h>
 #include <linux/arm-smccc.h>
 
 #define ARCBOX_HVC_PROBE      0xC2000000
@@ -127,6 +128,13 @@ static int arcbox_probe_one(int idx)
 	dev->tag_set.nr_hw_queues = 1;
 	dev->tag_set.queue_depth = 64;
 	dev->tag_set.numa_node = NUMA_NO_NODE;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+	/* Pre-6.14 the tag set must opt into blk-mq bio merging; 6.14 removed
+	 * the flag and made merging unconditional. Guarded (not deleted) so a
+	 * KERNEL_VERSION=6.12/6.13 override still merges adjacent bios instead
+	 * of issuing every small bio separately. */
+	dev->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
+#endif
 
 	err = blk_mq_alloc_tag_set(&dev->tag_set);
 	if (err)
