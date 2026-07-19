@@ -72,7 +72,8 @@ do_build() {
     # load-bearing ones actually resolved (a renamed choice symbol or a new
     # dependency gate in the fragment otherwise degrades silently — 6.18 did
     # exactly that to the legacy iptables stack via NETFILTER_XTABLES_LEGACY).
-    for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT CONFIG_IP6_NF_NAT; do
+    for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT \
+               CONFIG_IP6_NF_NAT CONFIG_PREEMPT_LAZY; do
         grep -q "^$sym=y" .config || {
             echo "ERROR: $sym missing after olddefconfig" >&2
             exit 1
@@ -118,7 +119,7 @@ cd linux-$KERNEL_VERSION
 sh /workspace/scripts/inject-drivers.sh /workspace
 cp /workspace/configs/arcbox-$TARGET_ARCH.config .config
 make ARCH=$TARGET_ARCH olddefconfig
-for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT CONFIG_IP6_NF_NAT; do
+for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT CONFIG_IP6_NF_NAT CONFIG_PREEMPT_LAZY; do
     grep -q \"^\$sym=y\" .config || {
         echo \"ERROR: \$sym missing after olddefconfig\" >&2
         exit 1
