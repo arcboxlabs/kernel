@@ -7,10 +7,11 @@
  * on the host file, bypassing VirtIO queues entirely.
  *
  * SMCCC function IDs (vendor-specific range):
- *   0xC2000000  ARCBOX_HVC_PROBE     -- returns number of block devices
- *   0xC2000001  ARCBOX_HVC_BLK_READ  -- synchronous pread
- *   0xC2000002  ARCBOX_HVC_BLK_WRITE -- synchronous pwrite
- *   0xC2000003  ARCBOX_HVC_BLK_FLUSH -- fsync
+ *   0xC2000000  ARCBOX_HVC_PROBE        -- returns number of block devices
+ *   0xC2000001  ARCBOX_HVC_BLK_READ     -- synchronous pread
+ *   0xC2000002  ARCBOX_HVC_BLK_WRITE    -- synchronous pwrite
+ *   0xC2000003  ARCBOX_HVC_BLK_FLUSH    -- fsync
+ *   0xC2000004  ARCBOX_HVC_BLK_CAPACITY -- device capacity in 512B sectors
  */
 
 #include <linux/blk-mq.h>
@@ -19,11 +20,18 @@
 #include <linux/version.h>
 #include <linux/arm-smccc.h>
 
-#define ARCBOX_HVC_PROBE      0xC2000000
-#define ARCBOX_HVC_BLK_READ   0xC2000001
-#define ARCBOX_HVC_BLK_WRITE  0xC2000002
-#define ARCBOX_HVC_BLK_FLUSH  0xC2000003
-#define ARCBOX_HVC_SECTOR     512
+#define ARCBOX_HVC_PROBE        0xC2000000
+#define ARCBOX_HVC_BLK_READ     0xC2000001
+#define ARCBOX_HVC_BLK_WRITE    0xC2000002
+#define ARCBOX_HVC_BLK_FLUSH    0xC2000003
+#define ARCBOX_HVC_BLK_CAPACITY 0xC2000004
+#define ARCBOX_HVC_SECTOR       512
+
+/*
+ * Fallback capacity for hosts that predate ARCBOX_HVC_BLK_CAPACITY: the old
+ * fixed placeholder (512 GiB in sectors). Only used when the query fails.
+ */
+#define ARCBOX_HVC_DEFAULT_SECTORS ((sector_t)1 << 30)
 
 #define DRIVER_NAME "arcbox_hvc_blk"
 #define MAX_DEVICES 8
@@ -56,6 +64,24 @@ static int arcbox_hvc_flush(unsigned int idx)
 	arm_smccc_1_1_hvc(ARCBOX_HVC_BLK_FLUSH, idx, 0, 0, 0, 0, 0, 0, &res);
 
 	return (long)res.a0 < 0 ? (int)(long)res.a0 : 0;
+}
+
+/*
+ * Query the device's real capacity in sectors. Returns the fixed fallback if
+ * the host is older than ARCBOX_HVC_BLK_CAPACITY (negative/zero result), so an
+ * old host keeps its previous behavior; a current host reports the true size,
+ * which the guest must honor or Btrfs will reject a data disk whose metadata
+ * records a larger size.
+ */
+static sector_t arcbox_hvc_capacity(unsigned int idx)
+{
+	struct arm_smccc_res res;
+
+	arm_smccc_1_1_hvc(ARCBOX_HVC_BLK_CAPACITY, idx, 0, 0, 0, 0, 0, 0, &res);
+
+	if ((long)res.a0 <= 0)
+		return ARCBOX_HVC_DEFAULT_SECTORS;
+	return (sector_t)res.a0;
 }
 
 static blk_status_t arcbox_queue_rq(struct blk_mq_hw_ctx *hctx,
@@ -153,8 +179,11 @@ static int arcbox_probe_one(int idx)
 	disk->fops = &arcbox_fops;
 	snprintf(disk->disk_name, DISK_NAME_LEN, "arcboxhvc%d", idx);
 
-	/* Large default capacity — VMM validates sector range. */
-	set_capacity(disk, (sector_t)1 << 30);
+	/* Use the host-reported capacity so the guest sees the true disk size.
+	 * A hardcoded value that undershoots the backing file silently corrupts
+	 * a Btrfs data disk whose metadata records the real (larger) size.
+	 */
+	set_capacity(disk, arcbox_hvc_capacity(idx));
 
 	err = add_disk(disk);
 	if (err) {
