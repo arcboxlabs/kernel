@@ -73,25 +73,22 @@ do_build() {
     # dependency gate in the fragment otherwise degrades silently — 6.18 did
     # exactly that to the legacy iptables stack via NETFILTER_XTABLES_LEGACY).
     for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT \
-               CONFIG_IP6_NF_NAT; do
+               CONFIG_IP6_NF_NAT CONFIG_HZ_1000 \
+               CONFIG_PSI_DEFAULT_DISABLED; do
         grep -q "^$sym=y" .config || {
             echo "ERROR: $sym missing after olddefconfig" >&2
             exit 1
         }
     done
 
-    # PREEMPT_LAZY exists only where the arch wires it up (x86 6.13+,
-    # arm64 6.16+). Assert it there; on an older KERNEL_VERSION override
-    # the choice falls back to its kconfig default, which is worth a
-    # warning but must not fail a bisect build.
-    if grep -q '^CONFIG_ARCH_HAS_PREEMPT_LAZY=y' .config; then
-        grep -q '^CONFIG_PREEMPT_LAZY=y' .config || {
-            echo 'ERROR: CONFIG_PREEMPT_LAZY missing after olddefconfig' >&2
-            exit 1
-        }
-    else
-        echo 'WARN: kernel lacks ARCH_HAS_PREEMPT_LAZY; preemption model falls back to the kconfig default' >&2
-    fi
+    # Voluntary preemption is load-bearing for container-teardown latency
+    # (see the config comment). Assert it survived olddefconfig; a future
+    # KERNEL_VERSION that drops the voluntary choice must fail loudly here
+    # rather than silently fall back to lazy/full.
+    grep -q '^CONFIG_PREEMPT_VOLUNTARY=y' .config || {
+        echo 'ERROR: CONFIG_PREEMPT_VOLUNTARY missing after olddefconfig' >&2
+        exit 1
+    }
 
     # Build.
     echo "Building kernel..."
@@ -132,20 +129,16 @@ cd linux-$KERNEL_VERSION
 sh /workspace/scripts/inject-drivers.sh /workspace
 cp /workspace/configs/arcbox-$TARGET_ARCH.config .config
 make ARCH=$TARGET_ARCH olddefconfig
-for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT CONFIG_IP6_NF_NAT; do
+for sym in CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU CONFIG_IP_NF_NAT CONFIG_IP6_NF_NAT CONFIG_HZ_1000 CONFIG_PSI_DEFAULT_DISABLED; do
     grep -q \"^\$sym=y\" .config || {
         echo \"ERROR: \$sym missing after olddefconfig\" >&2
         exit 1
     }
 done
-if grep -q '^CONFIG_ARCH_HAS_PREEMPT_LAZY=y' .config; then
-    grep -q '^CONFIG_PREEMPT_LAZY=y' .config || {
-        echo 'ERROR: CONFIG_PREEMPT_LAZY missing after olddefconfig' >&2
-        exit 1
-    }
-else
-    echo 'WARN: kernel lacks ARCH_HAS_PREEMPT_LAZY; preemption model falls back to the kconfig default' >&2
-fi
+grep -q '^CONFIG_PREEMPT_VOLUNTARY=y' .config || {
+    echo 'ERROR: CONFIG_PREEMPT_VOLUNTARY missing after olddefconfig' >&2
+    exit 1
+}
 echo 'Building kernel...'
 make ARCH=$TARGET_ARCH -j\$(nproc) $KERNEL_IMAGE
 cp arch/$TARGET_ARCH/boot/$KERNEL_IMAGE /output/kernel-$TARGET_ARCH
