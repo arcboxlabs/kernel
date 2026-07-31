@@ -14,9 +14,14 @@ at the FUSE wait point. The waiter observes the completion while still
 runnable: no wakeup IPI, no context switches. need_resched() breaks the
 spin immediately when the CPU has real work.
 
-READ/WRITE requests are excluded: their replies outlive any sane spin
-budget, and burning the budget anyway cost -54% sequential-read
-throughput in A/B testing. With the gate the win is one-sided
+Two gates bound the cost. Request types that legitimately block (bulk
+READ/WRITE, flush/fsync, copy_file_range, blocking locks) never spin:
+their replies outlive any sane budget, and an ungated spin cost -54%
+sequential-read throughput in A/B testing. Classic /dev/fuse transports
+(userspace daemons, arbitrary latency) never spin either — only
+kernel-mediated transports such as virtio-fs, where completion is
+IRQ-driven and fast, take the poll path. With the gates the win is
+one-sided
 (same guest, same VM, metadata_stat ops/s):
 
   stock 6.18.38          31.8k   (sequential read 3771 MB/s)
@@ -33,26 +38,39 @@ is the natural upstream refinement.
  #include <linux/sched.h>
 +#include <linux/timekeeping.h>
  #include <linux/seq_file.h>
-@@ -547,6 +548,24 @@ static void request_wait_answer(struct fuse_req *req)
+@@ -547,6 +548,37 @@ static void request_wait_answer(struct fuse_req *req)
  	struct fuse_iqueue *fiq = &fc->iq;
  	int err;
  
 +	/*
-+	 * Poll briefly before sleeping: metadata completions typically
-+	 * arrive within ~20-30us, and observing the flag while still
-+	 * runnable avoids the reschedule IPI (a trap on virtualized
-+	 * ARM64) and both context switches. Bulk READ/WRITE replies
-+	 * outlive any sane budget and regressed -54% under the burnt
-+	 * CPU, so only metadata-class requests spin.
++	 * Poll briefly before sleeping: on kernel-mediated transports
++	 * (virtio-fs) metadata completions typically arrive within
++	 * ~20-30us, and observing the flag while still runnable avoids
++	 * the reschedule IPI (a trap on virtualized ARM64) and both
++	 * context switches. Classic /dev/fuse daemons and request
++	 * types that legitimately block (bulk I/O, syncs, blocking
++	 * locks) keep stock behavior.
 +	 */
-+	if (req->in.h.opcode != FUSE_READ && req->in.h.opcode != FUSE_WRITE) {
-+		u64 spin_until = ktime_get_ns() + 40000;
++	switch (req->in.h.opcode) {
++	case FUSE_READ:
++	case FUSE_WRITE:
++	case FUSE_FLUSH:
++	case FUSE_FSYNC:
++	case FUSE_FSYNCDIR:
++	case FUSE_COPY_FILE_RANGE:
++	case FUSE_SETLKW:
++		break;
++	default:
++		if (fc->iq.ops != &fuse_dev_fiq_ops) {
++			u64 spin_until = ktime_get_ns() + 40000;
 +
-+		while (!test_bit(FR_FINISHED, &req->flags) &&
-+		       !need_resched() && ktime_get_ns() < spin_until)
-+			cpu_relax();
-+		if (test_bit(FR_FINISHED, &req->flags))
-+			return;
++			while (!test_bit(FR_FINISHED, &req->flags) &&
++			       !need_resched() && ktime_get_ns() < spin_until)
++				cpu_relax();
++			if (test_bit(FR_FINISHED, &req->flags))
++				return;
++		}
++		break;
 +	}
 +
  	if (!fc->no_interrupt) {
