@@ -1,0 +1,60 @@
+perf(fuse): bounded spin-wait for metadata request completion
+
+On virtualized ARM64 every reschedule IPI is a trap: the architecture
+has no TIF_POLLING_NRFLAG, so try_to_wake_up always sends a physical
+IPI, and with all vCPUs in one LLC domain wake_affine never migrates
+the waiter onto the IRQ CPU. A synchronous FUSE workload therefore pays
+device-IRQ trap + IPI trap + two context switches per operation — the
+reschedule-IPI count matches the virtio-fs request IRQ count 1:1
+(ArcBox CORE-48 measurements, Apple Virtualization.framework guest).
+
+Metadata completions typically arrive within ~20-30us, so poll
+FR_FINISHED for up to 40us before sleeping — KVM halt polling, applied
+at the FUSE wait point. The waiter observes the completion while still
+runnable: no wakeup IPI, no context switches. need_resched() breaks the
+spin immediately when the CPU has real work.
+
+READ/WRITE requests are excluded: their replies outlive any sane spin
+budget, and burning the budget anyway cost -54% sequential-read
+throughput in A/B testing. With the gate the win is one-sided
+(same guest, same VM, metadata_stat ops/s):
+
+  stock 6.18.38          31.8k   (sequential read 3771 MB/s)
+  + this patch           50.3k   (sequential read 3637 MB/s, noise)
+  hard-pinned ceiling    54.6k   (taskset + IRQ affinity, reference)
+
+negative_lookup +40%, create_delete +28%. A fixed budget keeps the
+patch minimal; an adaptive grow/shrink budget (as in KVM halt polling)
+is the natural upstream refinement.
+
+--- a/fs/fuse/dev.c
++++ b/fs/fuse/dev.c
+@@ -25,2 +25,3 @@
+ #include <linux/sched.h>
++#include <linux/timekeeping.h>
+ #include <linux/seq_file.h>
+@@ -547,6 +548,24 @@ static void request_wait_answer(struct fuse_req *req)
+ 	struct fuse_iqueue *fiq = &fc->iq;
+ 	int err;
+ 
++	/*
++	 * Poll briefly before sleeping: metadata completions typically
++	 * arrive within ~20-30us, and observing the flag while still
++	 * runnable avoids the reschedule IPI (a trap on virtualized
++	 * ARM64) and both context switches. Bulk READ/WRITE replies
++	 * outlive any sane budget and regressed -54% under the burnt
++	 * CPU, so only metadata-class requests spin.
++	 */
++	if (req->in.h.opcode != FUSE_READ && req->in.h.opcode != FUSE_WRITE) {
++		u64 spin_until = ktime_get_ns() + 40000;
++
++		while (!test_bit(FR_FINISHED, &req->flags) &&
++		       !need_resched() && ktime_get_ns() < spin_until)
++			cpu_relax();
++		if (test_bit(FR_FINISHED, &req->flags))
++			return;
++	}
++
+ 	if (!fc->no_interrupt) {
+ 		/* Any signal may interrupt this */
+ 		err = wait_event_interruptible(req->waitq,
