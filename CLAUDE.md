@@ -6,6 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `arcbox-kernel` provides optimized Linux kernel and initramfs builds for ArcBox VMs, targeting Apple Virtualization.framework (primary) and KVM (secondary).
 
+Two kernel **flavors** build from the same source — do not conflate them:
+
+- `system` (default): the System VM guest kernel (`configs/arcbox-{arch}.config`,
+  artifact `kernel-{arch}`). Full container stack: netfilter, cgroups
+  controllers, dm, overlayfs, NFS, HZ=1000/voluntary (ABX-498 tuning).
+- `microvm`: the Firecracker sandbox guest kernel
+  (`configs/arcbox-microvm-arm64.config`, artifact `microvm-kernel-arm64`,
+  arm64-only). Runs NESTED inside the System VM; optimized for kernel entry
+  → `/sbin/vm-agent` in the 200–300 ms class. virtio-mmio only — no
+  PCI/ACPI/EFI/netfilter/BPF; HZ=100/PREEMPT_NONE (nested ticks are
+  expensive). Consumed by boot-assets `upstream.toml` as the `vmlinux`
+  binary (`install_dir = "kernel"`).
+
+A flavor's load-bearing symbols are asserted post-`olddefconfig` in
+`scripts/build-kernel.sh` — extend the flavor's assertion list when adding a
+symbol whose silent loss would only surface at guest runtime.
+
 ## Build Commands
 
 ```bash
@@ -14,6 +31,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Build kernel for x86_64
 ARCH=x86_64 ./scripts/build-kernel.sh
+
+# Build the Firecracker sandbox microVM kernel (arm64-only)
+FLAVOR=microvm ./scripts/build-kernel.sh
 
 # Build kernel with specific version
 KERNEL_VERSION=6.18.0 ./scripts/build-kernel.sh
@@ -44,8 +64,9 @@ cargo build -p arcbox-agent --target aarch64-unknown-linux-musl --release
 ```
 arcbox-kernel/
 ├── configs/
-│   ├── arcbox-arm64.config     # ARM64 kernel config (Apple Silicon)
-│   └── arcbox-x86_64.config    # x86_64 kernel config
+│   ├── arcbox-arm64.config           # ARM64 System VM config (Apple Silicon)
+│   ├── arcbox-x86_64.config          # x86_64 System VM config
+│   └── arcbox-microvm-arm64.config   # ARM64 Firecracker sandbox config
 ├── scripts/
 │   ├── build-kernel.sh         # Kernel build (Docker-based)
 │   ├── build-initramfs.sh      # Initramfs build (Alpine + agent)

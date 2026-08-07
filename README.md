@@ -9,6 +9,25 @@ This repository contains:
 - Build scripts for kernel and initramfs
 - GitHub Actions CI for automated releases
 
+## Kernel Flavors
+
+Two independent guest kernels are built from the same kernel source:
+
+| Flavor | Config | Artifact | Boots |
+|--------|--------|----------|-------|
+| `system` (default) | `configs/arcbox-{arch}.config` | `kernel-{arch}` | ArcBox System VM (VZ/HV backends) |
+| `microvm` | `configs/arcbox-microvm-arm64.config` | `microvm-kernel-arm64` | Firecracker sandbox microVMs, nested inside the System VM |
+
+The microvm flavor is arm64-only for now: Firecracker x86_64 boots an ELF
+`vmlinux` (not a bzImage) and needs its own config
+(`VIRTIO_MMIO_CMDLINE_DEVICES`, kvmclock). It targets kernel entry →
+PID 1 in the 200–300 ms class under nested virtualization: virtio-mmio
+device model only, no PCI/ACPI/EFI/netfilter, everything built in.
+
+```bash
+FLAVOR=microvm ./scripts/build-kernel.sh
+```
+
 ## Features
 
 | Feature | Description |
@@ -49,8 +68,9 @@ tar -xzf arcbox-kernel-arm64-v0.1.0.tar.gz
 ```
 arcbox-kernel/
 ├── configs/
-│   ├── arcbox-arm64.config     # ARM64 kernel config
-│   └── arcbox-x86_64.config    # x86_64 kernel config
+│   ├── arcbox-arm64.config           # ARM64 System VM kernel config
+│   ├── arcbox-x86_64.config          # x86_64 System VM kernel config
+│   └── arcbox-microvm-arm64.config   # ARM64 Firecracker sandbox kernel config
 ├── scripts/
 │   ├── build-kernel.sh         # Kernel build script
 │   ├── build-initramfs.sh      # Initramfs build script

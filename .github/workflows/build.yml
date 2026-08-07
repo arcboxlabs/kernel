@@ -23,18 +23,29 @@ env:
 
 jobs:
   # ==========================================================================
-  # Build kernel for each architecture (native runners, no cross-compile).
+  # Build kernel for each architecture x flavor (native runners, no
+  # cross-compile). `system` boots the VZ/HV System VM; `microvm` boots
+  # Firecracker sandbox microVMs (arm64-only for now — Firecracker x86_64
+  # needs an ELF vmlinux and its own config).
   # ==========================================================================
   build-kernel:
-    name: Build Kernel (${{ matrix.arch }})
+    name: Build Kernel (${{ matrix.arch }}, ${{ matrix.flavor }})
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
           - arch: arm64
+            flavor: system
+            artifact: kernel-arm64
             runner: ubuntu-24.04-arm
           - arch: x86_64
+            flavor: system
+            artifact: kernel-x86_64
             runner: ubuntu-24.04
+          - arch: arm64
+            flavor: microvm
+            artifact: microvm-kernel-arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout
@@ -56,6 +67,7 @@ jobs:
         run: |
           USE_DOCKER=0 \
           ARCH=${{ matrix.arch }} \
+          FLAVOR=${{ matrix.flavor }} \
           KERNEL_VERSION=${{ env.KERNEL_VERSION }} \
           OUTPUT_DIR="$(pwd)/output" \
           ./scripts/build-kernel.sh
@@ -63,15 +75,15 @@ jobs:
       - name: Generate checksum
         run: |
           cd output
-          sha256sum "kernel-${{ matrix.arch }}" > "kernel-${{ matrix.arch }}.sha256"
+          sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
 
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-${{ matrix.arch }}
+          name: ${{ matrix.artifact }}
           path: |
-            output/kernel-${{ matrix.arch }}
-            output/kernel-${{ matrix.arch }}.sha256
+            output/${{ matrix.artifact }}
+            output/${{ matrix.artifact }}.sha256
           retention-days: 14
 
   # ==========================================================================
@@ -92,11 +104,11 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          for ARCH in arm64 x86_64; do
-            DIR="artifacts/kernel-$ARCH"
-            if [ -f "$DIR/kernel-$ARCH" ]; then
-              cp "$DIR/kernel-$ARCH" "release/kernel-$ARCH"
-              cp "$DIR/kernel-$ARCH.sha256" "release/kernel-$ARCH.sha256"
+          for NAME in kernel-arm64 kernel-x86_64 microvm-kernel-arm64; do
+            DIR="artifacts/$NAME"
+            if [ -f "$DIR/$NAME" ]; then
+              cp "$DIR/$NAME" "release/$NAME"
+              cp "$DIR/$NAME.sha256" "release/$NAME.sha256"
             fi
           done
           echo "=== Release files ==="
@@ -112,8 +124,9 @@ jobs:
             Self-compiled Linux kernel for ArcBox VMs (`CONFIG_MODULES=n`, all drivers built-in).
 
             ### Files
-            - `kernel-arm64` — ARM64 Image (Apple Silicon / ARM VMs)
-            - `kernel-x86_64` — x86_64 bzImage
+            - `kernel-arm64` — ARM64 Image, System VM (Apple Silicon / ARM VMs)
+            - `kernel-x86_64` — x86_64 bzImage, System VM
+            - `microvm-kernel-arm64` — ARM64 Image, Firecracker sandbox microVMs
           files: release/*
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
