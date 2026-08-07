@@ -23,12 +23,13 @@ virtio-mmio device model only, no PCI/EFI/netfilter, everything built in.
 The two arches serve different hosts and differ deliberately: arm64 runs
 NESTED inside the macOS System VM (DT device discovery, PL031 RTC, Image
 artifact, no ACPI), while x86_64 runs on bare-metal Linux KVM hosts —
-ArcBox-on-Linux sandboxes and the platform PaaS fleet — where ACPI
-carries the boot protocol/MADT/VMGenID, virtio-mmio devices arrive via
-Firecracker's auto-appended `virtio_mmio.device=` cmdline entries,
-kvmclock replaces the missing RTC, the artifact is the ELF `vmlinux`
-Firecracker boots directly, and the initramfs (zstd) + squashfs (xz)
-pair carries the platform boot contract.
+ArcBox-on-Linux sandboxes and the platform PaaS fleet — where
+Firecracker presents a hardware-reduced ACPI platform (DSDT-enumerated
+virtio-mmio, `CONFIG_PCI` required by ACPI init per FC's kernel policy
+despite zero PCI devices), kvmclock replaces the missing RTC, the
+artifact is the ELF `vmlinux` Firecracker boots directly, and the
+initramfs (zstd) + squashfs (xz) pair carries the platform boot
+contract.
 CI boot-smokes the x86_64 kernel under Firecracker on a KVM-capable
 runner.
 

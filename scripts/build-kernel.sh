@@ -67,23 +67,27 @@ elif [ "$FLAVOR" = "microvm" ]; then
               CONFIG_VIRTIO_VSOCKETS CONFIG_DEVTMPFS_MOUNT CONFIG_IP_PNP
               CONFIG_UNIX98_PTYS CONFIG_EXT4_FS CONFIG_SERIAL_8250_CONSOLE
               CONFIG_PTP_1588_CLOCK_KVM CONFIG_VMGENID"
-    ASSERT_N="CONFIG_PCI CONFIG_NETFILTER CONFIG_MODULES CONFIG_EFI"
+    ASSERT_N="CONFIG_NETFILTER CONFIG_MODULES CONFIG_EFI"
     if [ "$TARGET_ARCH" = "arm64" ]; then
-        # aarch64 Firecracker: DT device discovery, PL031 RTC; ACPI is cut
-        # and must stay cut.
+        # aarch64 Firecracker: DT device discovery, PL031 RTC; ACPI and
+        # PCI are cut and must stay cut.
         ASSERT_Y="$ASSERT_Y CONFIG_RTC_DRV_PL031"
-        ASSERT_N="$ASSERT_N CONFIG_ACPI"
+        ASSERT_N="$ASSERT_N CONFIG_ACPI CONFIG_PCI"
     else
-        # x86_64 Firecracker: ACPI carries the boot protocol, MADT (SMP)
-        # and VMGenID, while virtio-mmio devices arrive via auto-appended
-        # virtio_mmio.device= cmdline entries (the FC DSDT has no virtio
-        # nodes — CI-boot-smoke-verified), kvmclock replaces the missing
-        # RTC, and the bootable artifact is the ELF vmlinux at the source
-        # root — not bzImage. The initramfs/squashfs pair is the platform
-        # PaaS boot contract (arcbox-bootkit: zstd cpio + xz run-env).
-        ASSERT_Y="$ASSERT_Y CONFIG_ACPI CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES
-                  CONFIG_KVM_GUEST CONFIG_BLK_DEV_INITRD CONFIG_RD_ZSTD
+        # x86_64 Firecracker is a hardware-reduced ACPI platform: the
+        # DSDT enumerates virtio-mmio (LNRO0005), and per FC's kernel
+        # policy ACPI initialization needs CONFIG_PCI even though no PCI
+        # device ever appears. The deprecated fallbacks (MPTable, cmdline
+        # virtio-mmio) must stay off — the cmdline path spawns duplicate
+        # devices with raw ISA IRQs that cannot work without a legacy
+        # PIC. kvmclock replaces the missing RTC; the bootable artifact
+        # is the ELF vmlinux at the source root — not bzImage. The
+        # initramfs/squashfs pair is the platform PaaS boot contract
+        # (arcbox-bootkit: zstd cpio + xz run-env).
+        ASSERT_Y="$ASSERT_Y CONFIG_ACPI CONFIG_PCI CONFIG_KVM_GUEST
+                  CONFIG_BLK_DEV_INITRD CONFIG_RD_ZSTD
                   CONFIG_SQUASHFS CONFIG_SQUASHFS_XZ"
+        ASSERT_N="$ASSERT_N CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES CONFIG_X86_MPPARSE"
         KERNEL_IMAGE="vmlinux"
     fi
 else

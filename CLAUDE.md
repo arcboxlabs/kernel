@@ -18,9 +18,10 @@ Two kernel **flavors** build from the same source — do not conflate them:
   deliberately: arm64 runs NESTED inside the macOS System VM (DT
   discovery, PL031 RTC, no ACPI; consumed by boot-assets `upstream.toml`
   as the `vmlinux` binary, `install_dir = "kernel"`); x86_64 runs on
-  bare-metal Linux KVM (ACPI boot/MADT/VMGenID + cmdline virtio-mmio
-  discovery, kvmclock, ELF vmlinux artifact, zstd initramfs + xz
-  squashfs for the platform PaaS fleet; KVM boot-smoked in CI). Keep the per-arch assertion sets in
+  bare-metal Linux KVM (hardware-reduced ACPI: DSDT-enumerated
+  virtio-mmio, PCI config option required by ACPI init, kvmclock, ELF
+  vmlinux artifact, zstd initramfs + xz squashfs for the platform PaaS
+  fleet; KVM boot-smoked in CI). Keep the per-arch assertion sets in
   build-kernel.sh in lockstep with any config edit.
 
 A flavor's load-bearing symbols are asserted post-`olddefconfig` in
