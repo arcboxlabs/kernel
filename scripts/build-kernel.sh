@@ -10,9 +10,9 @@
 # Flavors:
 #   system  (default) — System VM guest kernel (VZ/HV backends),
 #                       configs/arcbox-{arch}.config, output kernel-{arch}
-#   microvm           — Firecracker sandbox guest kernel (arm64 only),
+#   microvm           — Firecracker sandbox guest kernel,
 #                       configs/arcbox-microvm-{arch}.config,
-#                       output microvm-kernel-{arch}
+#                       output microvm-kernel-{arch} (x86_64: ELF vmlinux)
 
 set -e
 
@@ -56,22 +56,34 @@ if [ "$FLAVOR" = "system" ]; then
               CONFIG_PREEMPT_VOLUNTARY"
     ASSERT_N=""
 elif [ "$FLAVOR" = "microvm" ]; then
-    if [ "$TARGET_ARCH" != "arm64" ]; then
-        echo "Error: microvm flavor is arm64-only (Firecracker x86_64 needs an ELF vmlinux and a separate config)"
-        exit 1
-    fi
     CONFIG_FILE="$CONFIG_DIR/arcbox-microvm-$TARGET_ARCH.config"
     OUTPUT_NAME="microvm-kernel-$TARGET_ARCH"
     # The Firecracker sandbox contract: virtio-mmio devices, vsock exec/PTY,
-    # devtmpfs automount over the empty template /dev, static ip=, PL031 +
-    # ptp_kvm clocks, VMGenID RNG reseed. Also assert that the deliberately
+    # devtmpfs automount over the empty template /dev, static ip=, ptp_kvm
+    # restore resync, VMGenID RNG reseed. Also assert that the deliberately
     # cut subsystems stayed cut (a fragment typo re-enabling PCI/netfilter
     # would otherwise ship silently).
     ASSERT_Y="CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_BLK CONFIG_VIRTIO_NET
               CONFIG_VIRTIO_VSOCKETS CONFIG_DEVTMPFS_MOUNT CONFIG_IP_PNP
               CONFIG_UNIX98_PTYS CONFIG_EXT4_FS CONFIG_SERIAL_8250_CONSOLE
-              CONFIG_RTC_DRV_PL031 CONFIG_PTP_1588_CLOCK_KVM CONFIG_VMGENID"
-    ASSERT_N="CONFIG_PCI CONFIG_NETFILTER CONFIG_MODULES CONFIG_ACPI CONFIG_EFI"
+              CONFIG_PTP_1588_CLOCK_KVM CONFIG_VMGENID"
+    ASSERT_N="CONFIG_PCI CONFIG_NETFILTER CONFIG_MODULES CONFIG_EFI"
+    if [ "$TARGET_ARCH" = "arm64" ]; then
+        # aarch64 Firecracker: DT device discovery, PL031 RTC; ACPI is cut
+        # and must stay cut.
+        ASSERT_Y="$ASSERT_Y CONFIG_RTC_DRV_PL031"
+        ASSERT_N="$ASSERT_N CONFIG_ACPI"
+    else
+        # x86_64 Firecracker: ACPI IS the boot protocol and virtio-mmio
+        # discovery path (>= 1.7), kvmclock replaces the missing RTC, and
+        # the bootable artifact is the ELF vmlinux at the source root —
+        # not bzImage. The initramfs/squashfs pair is the platform PaaS
+        # boot contract (arcbox-bootkit: zstd cpio + xz run-env image).
+        ASSERT_Y="$ASSERT_Y CONFIG_ACPI CONFIG_KVM_GUEST
+                  CONFIG_BLK_DEV_INITRD CONFIG_RD_ZSTD
+                  CONFIG_SQUASHFS CONFIG_SQUASHFS_XZ"
+        KERNEL_IMAGE="vmlinux"
+    fi
 else
     echo "Error: Unsupported flavor: $FLAVOR (expected 'system' or 'microvm')"
     exit 1
@@ -82,6 +94,15 @@ fi
 # terminate the `for ... in` list early.
 ASSERT_Y=$(echo $ASSERT_Y)
 ASSERT_N=$(echo $ASSERT_N)
+
+# Where the bootable artifact lands in the source tree. vmlinux is the ELF
+# at the root (Firecracker x86_64 boots it directly); everything else is a
+# packaged image under arch/*/boot.
+if [ "$KERNEL_IMAGE" = "vmlinux" ]; then
+    KERNEL_IMAGE_SRC="vmlinux"
+else
+    KERNEL_IMAGE_SRC="arch/$TARGET_ARCH/boot/$KERNEL_IMAGE"
+fi
 
 echo "========================================"
 echo "  ArcBox Kernel Build"
@@ -140,7 +161,7 @@ do_build() {
     make ARCH=$TARGET_ARCH ${CROSS_COMPILE:+CROSS_COMPILE=$CROSS_COMPILE} -j"$(nproc)" $KERNEL_IMAGE
 
     # Copy output.
-    cp "arch/$TARGET_ARCH/boot/$KERNEL_IMAGE" "$OUTPUT_PATH"
+    cp "$KERNEL_IMAGE_SRC" "$OUTPUT_PATH"
     echo ""
     echo "Build complete!"
     ls -lh "$OUTPUT_PATH"
@@ -191,7 +212,7 @@ for sym in $ASSERT_N; do
 done
 echo 'Building kernel...'
 make ARCH=$TARGET_ARCH -j\$(nproc) $KERNEL_IMAGE
-cp arch/$TARGET_ARCH/boot/$KERNEL_IMAGE /output/$OUTPUT_NAME
+cp $KERNEL_IMAGE_SRC /output/$OUTPUT_NAME
 echo 'Build complete!'
 ls -lh /output/$OUTPUT_NAME
 "

@@ -16,13 +16,19 @@ Two independent guest kernels are built from the same kernel source:
 | Flavor | Config | Artifact | Boots |
 |--------|--------|----------|-------|
 | `system` (default) | `configs/arcbox-{arch}.config` | `kernel-{arch}` | ArcBox System VM (VZ/HV backends) |
-| `microvm` | `configs/arcbox-microvm-arm64.config` | `microvm-kernel-arm64` | Firecracker sandbox microVMs, nested inside the System VM |
+| `microvm` | `configs/arcbox-microvm-{arch}.config` | `microvm-kernel-{arch}` | Firecracker sandbox microVMs |
 
-The microvm flavor is arm64-only for now: Firecracker x86_64 boots an ELF
-`vmlinux` (not a bzImage) and needs its own config
-(`VIRTIO_MMIO_CMDLINE_DEVICES`, kvmclock). It targets kernel entry →
-PID 1 in the 200–300 ms class under nested virtualization: virtio-mmio
-device model only, no PCI/ACPI/EFI/netfilter, everything built in.
+The microvm flavor targets kernel entry → PID 1 in the 200–300 ms class:
+virtio-mmio device model only, no PCI/EFI/netfilter, everything built in.
+The two arches serve different hosts and differ deliberately: arm64 runs
+NESTED inside the macOS System VM (DT device discovery, PL031 RTC, Image
+artifact, no ACPI), while x86_64 runs on bare-metal Linux KVM hosts —
+ArcBox-on-Linux sandboxes and the platform PaaS fleet — where ACPI is the
+Firecracker boot protocol, kvmclock replaces the missing RTC, the
+artifact is the ELF `vmlinux` Firecracker boots directly, and the
+initramfs (zstd) + squashfs (xz) pair carries the platform boot contract.
+CI boot-smokes the x86_64 kernel under Firecracker on a KVM-capable
+runner.
 
 ```bash
 FLAVOR=microvm ./scripts/build-kernel.sh

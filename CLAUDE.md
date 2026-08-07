@@ -12,12 +12,16 @@ Two kernel **flavors** build from the same source — do not conflate them:
   artifact `kernel-{arch}`). Full container stack: netfilter, cgroups
   controllers, dm, overlayfs, NFS, HZ=1000/voluntary (ABX-498 tuning).
 - `microvm`: the Firecracker sandbox guest kernel
-  (`configs/arcbox-microvm-arm64.config`, artifact `microvm-kernel-arm64`,
-  arm64-only). Runs NESTED inside the System VM; optimized for kernel entry
-  → `/sbin/vm-agent` in the 200–300 ms class. virtio-mmio only — no
-  PCI/ACPI/EFI/netfilter/BPF; HZ=100/PREEMPT_NONE (nested ticks are
-  expensive). Consumed by boot-assets `upstream.toml` as the `vmlinux`
-  binary (`install_dir = "kernel"`).
+  (`configs/arcbox-microvm-{arch}.config`, artifact `microvm-kernel-{arch}`).
+  Optimized for kernel entry → PID 1 in the 200–300 ms class; virtio-mmio
+  only, no PCI/EFI/netfilter/BPF, HZ=100/PREEMPT_NONE. The arches differ
+  deliberately: arm64 runs NESTED inside the macOS System VM (DT
+  discovery, PL031 RTC, no ACPI; consumed by boot-assets `upstream.toml`
+  as the `vmlinux` binary, `install_dir = "kernel"`); x86_64 runs on
+  bare-metal Linux KVM (ACPI boot + discovery, kvmclock, ELF vmlinux
+  artifact, zstd initramfs + xz squashfs for the platform PaaS fleet;
+  KVM boot-smoked in CI). Keep the per-arch assertion sets in
+  build-kernel.sh in lockstep with any config edit.
 
 A flavor's load-bearing symbols are asserted post-`olddefconfig` in
 `scripts/build-kernel.sh` — extend the flavor's assertion list when adding a
