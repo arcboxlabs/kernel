@@ -92,7 +92,10 @@ jobs:
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
           FC_VER=v1.16.1
-          curl -sfL "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-x86_64.tgz" | tar xz
+          FC_SHA256=382a02a869e4d6d5cb14c40577f9545e8458021ea8b0b2d3fc10ec14d9c242e6
+          curl -sfL "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-x86_64.tgz" -o fc.tgz
+          echo "${FC_SHA256}  fc.tgz" | sha256sum -c -
+          tar xzf fc.tgz
           FC="release-${FC_VER}-x86_64/firecracker-${FC_VER}-x86_64"
           sudo apt-get install -y busybox-static
           dd if=/dev/zero of=rootfs.ext4 bs=1M count=16

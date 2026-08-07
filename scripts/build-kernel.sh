@@ -74,13 +74,15 @@ elif [ "$FLAVOR" = "microvm" ]; then
         ASSERT_Y="$ASSERT_Y CONFIG_RTC_DRV_PL031"
         ASSERT_N="$ASSERT_N CONFIG_ACPI"
     else
-        # x86_64 Firecracker: ACPI IS the boot protocol and virtio-mmio
-        # discovery path (>= 1.7), kvmclock replaces the missing RTC, and
-        # the bootable artifact is the ELF vmlinux at the source root —
-        # not bzImage. The initramfs/squashfs pair is the platform PaaS
-        # boot contract (arcbox-bootkit: zstd cpio + xz run-env image).
-        ASSERT_Y="$ASSERT_Y CONFIG_ACPI CONFIG_KVM_GUEST
-                  CONFIG_BLK_DEV_INITRD CONFIG_RD_ZSTD
+        # x86_64 Firecracker: ACPI carries the boot protocol, MADT (SMP)
+        # and VMGenID, while virtio-mmio devices arrive via auto-appended
+        # virtio_mmio.device= cmdline entries (the FC DSDT has no virtio
+        # nodes — CI-boot-smoke-verified), kvmclock replaces the missing
+        # RTC, and the bootable artifact is the ELF vmlinux at the source
+        # root — not bzImage. The initramfs/squashfs pair is the platform
+        # PaaS boot contract (arcbox-bootkit: zstd cpio + xz run-env).
+        ASSERT_Y="$ASSERT_Y CONFIG_ACPI CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES
+                  CONFIG_KVM_GUEST CONFIG_BLK_DEV_INITRD CONFIG_RD_ZSTD
                   CONFIG_SQUASHFS CONFIG_SQUASHFS_XZ"
         KERNEL_IMAGE="vmlinux"
     fi
