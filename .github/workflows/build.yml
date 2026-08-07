@@ -25,8 +25,9 @@ jobs:
   # ==========================================================================
   # Build kernel for each architecture x flavor (native runners, no
   # cross-compile). `system` boots the VZ/HV System VM; `microvm` boots
-  # Firecracker sandbox microVMs (arm64-only for now — Firecracker x86_64
-  # needs an ELF vmlinux and its own config).
+  # Firecracker sandbox microVMs (arm64 nested on macOS, x86_64 bare-metal
+  # Linux hosts — the x86_64 artifact is the ELF vmlinux Firecracker boots
+  # directly, and it is KVM boot-smoked in CI below).
   # ==========================================================================
   build-kernel:
     name: Build Kernel (${{ matrix.arch }}, ${{ matrix.flavor }})
@@ -46,6 +47,10 @@ jobs:
             flavor: microvm
             artifact: microvm-kernel-arm64
             runner: ubuntu-24.04-arm
+          - arch: x86_64
+            flavor: microvm
+            artifact: microvm-kernel-x86_64
+            runner: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -71,6 +76,55 @@ jobs:
           KERNEL_VERSION=${{ env.KERNEL_VERSION }} \
           OUTPUT_DIR="$(pwd)/output" \
           ./scripts/build-kernel.sh
+
+      # x86_64 hosted runners expose /dev/kvm, so the one kernel we cannot
+      # boot on developer hardware (Apple Silicon) is the one we CAN boot
+      # in CI: bring up the freshly built ELF vmlinux under the pinned
+      # Firecracker with a busybox init that prints a marker. This
+      # exercises the exact risk set of this flavor — ACPI boot + ACPI
+      # virtio-mmio discovery, virtio-blk, ext4 root, ttyS0 console, and
+      # init exec. arm64 runners have no KVM; that flavor is validated by
+      # the sandbox e2e suite on real hardware instead.
+      - name: Boot-smoke under Firecracker (KVM)
+        if: matrix.artifact == 'microvm-kernel-x86_64'
+        run: |
+          set -eux
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          FC_VER=v1.16.1
+          FC_SHA256=382a02a869e4d6d5cb14c40577f9545e8458021ea8b0b2d3fc10ec14d9c242e6
+          curl -sfL "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-x86_64.tgz" -o fc.tgz
+          echo "${FC_SHA256}  fc.tgz" | sha256sum -c -
+          tar xzf fc.tgz
+          FC="release-${FC_VER}-x86_64/firecracker-${FC_VER}-x86_64"
+          sudo apt-get install -y busybox-static
+          dd if=/dev/zero of=rootfs.ext4 bs=1M count=16
+          mkfs.ext4 -q rootfs.ext4
+          mkdir mnt && sudo mount -o loop rootfs.ext4 mnt
+          sudo mkdir -p mnt/bin mnt/dev mnt/proc mnt/sys
+          sudo cp "$(command -v busybox)" mnt/bin/busybox
+          printf '#!/bin/busybox sh\n/bin/busybox echo ARCBOX-X86-MICROVM-BOOT-OK\n/bin/busybox reboot -f\n' | sudo tee mnt/init >/dev/null
+          sudo chmod +x mnt/init
+          sudo umount mnt
+          cat > fc.json <<'CFG'
+          {
+            "boot-source": {
+              "kernel_image_path": "output/microvm-kernel-x86_64",
+              "boot_args": "console=ttyS0 reboot=k panic=-1 pci=off root=/dev/vda rw init=/init"
+            },
+            "drives": [
+              {
+                "drive_id": "rootfs",
+                "path_on_host": "rootfs.ext4",
+                "is_root_device": true,
+                "is_read_only": false
+              }
+            ],
+            "machine-config": { "vcpu_count": 1, "mem_size_mib": 128 }
+          }
+          CFG
+          timeout 60 "$FC" --no-api --config-file fc.json | tee console.log || true
+          grep -q ARCBOX-X86-MICROVM-BOOT-OK console.log
 
       - name: Generate checksum
         run: |
@@ -104,7 +158,7 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          for NAME in kernel-arm64 kernel-x86_64 microvm-kernel-arm64; do
+          for NAME in kernel-arm64 kernel-x86_64 microvm-kernel-arm64 microvm-kernel-x86_64; do
             DIR="artifacts/$NAME"
             if [ -f "$DIR/$NAME" ]; then
               cp "$DIR/$NAME" "release/$NAME"
@@ -126,7 +180,8 @@ jobs:
             ### Files
             - `kernel-arm64` — ARM64 Image, System VM (Apple Silicon / ARM VMs)
             - `kernel-x86_64` — x86_64 bzImage, System VM
-            - `microvm-kernel-arm64` — ARM64 Image, Firecracker sandbox microVMs
+            - `microvm-kernel-arm64` — ARM64 Image, Firecracker sandbox microVMs (nested, macOS hosts)
+            - `microvm-kernel-x86_64` — x86_64 ELF vmlinux, Firecracker sandbox microVMs (bare-metal Linux hosts / platform fleet)
           files: release/*
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
