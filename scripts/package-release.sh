@@ -30,18 +30,18 @@ echo ""
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 
-for ARCH in arm64 x86_64; do
-    KERNEL="$OUTPUT_DIR/kernel-$ARCH"
+for NAME in kernel-arm64 kernel-x86_64 microvm-kernel-arm64; do
+    KERNEL="$OUTPUT_DIR/$NAME"
 
     if [ ! -f "$KERNEL" ]; then
-        echo "Warning: kernel-$ARCH not found, skipping"
+        echo "Warning: $NAME not found, skipping"
         continue
     fi
 
-    echo "Packaging $ARCH..."
-    cp "$KERNEL" "$RELEASE_DIR/kernel-$ARCH"
-    sha256sum "$RELEASE_DIR/kernel-$ARCH" > "$RELEASE_DIR/kernel-$ARCH.sha256"
-    echo "  Created: kernel-$ARCH + kernel-$ARCH.sha256"
+    echo "Packaging $NAME..."
+    cp "$KERNEL" "$RELEASE_DIR/$NAME"
+    sha256sum "$RELEASE_DIR/$NAME" > "$RELEASE_DIR/$NAME.sha256"
+    echo "  Created: $NAME + $NAME.sha256"
 done
 
 echo ""
@@ -50,4 +50,4 @@ echo "  Packaging Complete!"
 echo "========================================"
 echo ""
 echo "Release files:"
-ls -lh "$RELEASE_DIR"/kernel-* 2>/dev/null || echo "  (none)"
+ls -lh "$RELEASE_DIR"/*kernel-* 2>/dev/null || echo "  (none)"
