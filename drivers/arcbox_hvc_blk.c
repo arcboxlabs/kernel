@@ -12,11 +12,13 @@
  *   0xC2000002  ARCBOX_HVC_BLK_WRITE    -- synchronous pwrite
  *   0xC2000003  ARCBOX_HVC_BLK_FLUSH    -- fsync
  *   0xC2000004  ARCBOX_HVC_BLK_CAPACITY -- device capacity in 512B sectors
+ *   0xC2000005  ARCBOX_HVC_BLK_DISCARD  -- deallocate a sector range (hole punch)
  */
 
 #include <linux/blk-mq.h>
 #include <linux/blkdev.h>
 #include <linux/init.h>
+#include <linux/sizes.h>
 #include <linux/version.h>
 #include <linux/arm-smccc.h>
 
@@ -25,7 +27,24 @@
 #define ARCBOX_HVC_BLK_WRITE    0xC2000002
 #define ARCBOX_HVC_BLK_FLUSH    0xC2000003
 #define ARCBOX_HVC_BLK_CAPACITY 0xC2000004
+#define ARCBOX_HVC_BLK_DISCARD  0xC2000005
 #define ARCBOX_HVC_SECTOR       512
+
+/*
+ * Largest range one DISCARD hypercall covers, in sectors (1 GiB). The host
+ * punches the range synchronously on the calling vCPU, and a range that is
+ * all live data costs it ~20 ms per GiB, so this bounds the stall; a
+ * range that is already a hole costs microseconds regardless of size, so
+ * trimming the unallocated tail of an 8 TiB disk stays cheap.
+ */
+#define ARCBOX_HVC_MAX_DISCARD_SECTORS (SZ_1G / ARCBOX_HVC_SECTOR)
+
+/*
+ * The host frees whole 4 KiB blocks of its sparse image, so advertise that as
+ * the discard granularity: the filesystem then skips sub-block ranges the
+ * host could not reclaim anyway.
+ */
+#define ARCBOX_HVC_DISCARD_GRANULARITY SZ_4K
 
 /*
  * Fallback capacity for hosts that predate ARCBOX_HVC_BLK_CAPACITY: the old
@@ -62,6 +81,24 @@ static int arcbox_hvc_flush(unsigned int idx)
 	struct arm_smccc_res res;
 
 	arm_smccc_1_1_hvc(ARCBOX_HVC_BLK_FLUSH, idx, 0, 0, 0, 0, 0, 0, &res);
+
+	return (long)res.a0 < 0 ? (int)(long)res.a0 : 0;
+}
+
+/*
+ * Ask the host to deallocate @nr_sectors from @sector so the backing sparse
+ * image shrinks. A zero-length call is the capability probe: a host that
+ * implements the hypercall answers 0, an older host answers the SMCCC
+ * "not supported" (-1) for the unknown function ID, so the probe keeps
+ * discard off against it and the device behaves exactly as before.
+ */
+static int arcbox_hvc_discard(unsigned int idx, sector_t sector,
+			      unsigned int nr_sectors)
+{
+	struct arm_smccc_res res;
+
+	arm_smccc_1_1_hvc(ARCBOX_HVC_BLK_DISCARD, idx, sector, nr_sectors,
+			  0, 0, 0, 0, &res);
 
 	return (long)res.a0 < 0 ? (int)(long)res.a0 : 0;
 }
@@ -108,6 +145,10 @@ static blk_status_t arcbox_queue_rq(struct blk_mq_hw_ctx *hctx,
 		ret = arcbox_hvc_flush(dev->idx);
 		blk_mq_end_request(rq, ret < 0 ? BLK_STS_IOERR : BLK_STS_OK);
 		return BLK_STS_OK;
+	case REQ_OP_DISCARD:
+		ret = arcbox_hvc_discard(dev->idx, sector, blk_rq_sectors(rq));
+		blk_mq_end_request(rq, ret < 0 ? BLK_STS_IOERR : BLK_STS_OK);
+		return BLK_STS_OK;
 	default:
 		blk_mq_end_request(rq, BLK_STS_NOTSUPP);
 		return BLK_STS_OK;
@@ -145,9 +186,18 @@ static int arcbox_probe_one(int idx)
 		.features = BLK_FEAT_WRITE_CACHE,
 	};
 	struct gendisk *disk;
+	bool discard;
 	int err;
 
 	dev->idx = idx;
+
+	/* Only a host that answers the probe gets DISCARD requests. */
+	discard = arcbox_hvc_discard(idx, 0, 0) == 0;
+	if (discard) {
+		lim.max_hw_discard_sectors = ARCBOX_HVC_MAX_DISCARD_SECTORS;
+		lim.discard_granularity = ARCBOX_HVC_DISCARD_GRANULARITY;
+		lim.max_discard_segments = 1;
+	}
 
 	memset(&dev->tag_set, 0, sizeof(dev->tag_set));
 	dev->tag_set.ops = &arcbox_mq_ops;
@@ -192,7 +242,8 @@ static int arcbox_probe_one(int idx)
 		return err;
 	}
 
-	pr_info(DRIVER_NAME ": /dev/%s (device %d, rw)\n", disk->disk_name, idx);
+	pr_info(DRIVER_NAME ": /dev/%s (device %d, rw%s)\n", disk->disk_name, idx,
+		discard ? ", discard" : "");
 	return 0;
 }
 
