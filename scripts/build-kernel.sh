@@ -60,7 +60,7 @@ if [ "$FLAVOR" = "system" ]; then
     # dropped dependency fails the build instead of shipping a kernel that
     # cannot catch the UAF. arm64-only — x86_64 system stays KASAN-free.
     if [ "$TARGET_ARCH" = "arm64" ]; then
-        ASSERT_Y="$ASSERT_Y CONFIG_KASAN CONFIG_KASAN_GENERIC"
+        ASSERT_Y="$ASSERT_Y CONFIG_KASAN CONFIG_KASAN_GENERIC CONFIG_KASAN_VMALLOC"
     fi
 elif [ "$FLAVOR" = "microvm" ]; then
     CONFIG_FILE="$CONFIG_DIR/arcbox-microvm-$TARGET_ARCH.config"
