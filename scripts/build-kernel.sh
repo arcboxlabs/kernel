@@ -55,6 +55,13 @@ if [ "$FLAVOR" = "system" ]; then
               CONFIG_IP6_NF_NAT CONFIG_HZ_1000 CONFIG_PSI_DEFAULT_DISABLED
               CONFIG_PREEMPT_VOLUNTARY"
     ASSERT_N=""
+    # DEBUG ONLY (branch debug/kasan-seccomp-uaf): the arm64 system config
+    # carries KASAN on this branch; assert it survived olddefconfig so a
+    # dropped dependency fails the build instead of shipping a kernel that
+    # cannot catch the UAF. arm64-only — x86_64 system stays KASAN-free.
+    if [ "$TARGET_ARCH" = "arm64" ]; then
+        ASSERT_Y="$ASSERT_Y CONFIG_KASAN CONFIG_KASAN_GENERIC"
+    fi
 elif [ "$FLAVOR" = "microvm" ]; then
     CONFIG_FILE="$CONFIG_DIR/arcbox-microvm-$TARGET_ARCH.config"
     OUTPUT_NAME="microvm-kernel-$TARGET_ARCH"
